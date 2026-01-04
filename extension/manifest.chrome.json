@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "PDF Autofill",
+  "version": "1.0.0",
+  "description": "A browser extension for PDF autofill functionality",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "http://localhost:8000/*",
+    "<all_urls>",
+    "file:///*"
+  ],
+  "action": {},
+  "background": {
+    "service_worker": "dist/background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>", "file:///*"],
+      "js": ["dist/content.js"],
+      "run_at": "document_end"
+    }
+  ]
+}

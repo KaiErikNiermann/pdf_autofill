@@ -1,0 +1,183 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 1.0.0)'
+        required: true
+        type: string
+
+env:
+  PYTHON_VERSION: '3.13'
+  NODE_VERSION: '20'
+
+jobs:
+  build-backend-windows:
+    name: Build Backend (Windows)
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Tesseract OCR
+        run: |
+          choco install tesseract -y
+          echo "C:\Program Files\Tesseract-OCR" >> $env:GITHUB_PATH
+
+      - name: Install Poppler
+        run: |
+          choco install poppler -y
+
+      - name: Install Poetry
+        run: |
+          pip install poetry
+
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          poetry config virtualenvs.create false
+          poetry install --no-interaction --no-root
+
+      - name: Build executable
+        working-directory: backend
+        run: |
+          python scripts/build_exe.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-windows-x64
+          path: backend/dist/*.zip
+          retention-days: 30
+
+  build-extension:
+    name: Build Browser Extension
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Install dependencies
+        working-directory: extension
+        run: npm ci || npm install
+
+      - name: Build Chrome extension
+        working-directory: extension
+        run: npm run package:chrome
+
+      - name: Build Firefox extension
+        working-directory: extension
+        run: npm run package:firefox
+
+      - name: Upload Chrome extension
+        uses: actions/upload-artifact@v4
+        with:
+          name: extension-chrome
+          path: dist/pdf-autofill-chrome.zip
+          retention-days: 30
+
+      - name: Upload Firefox extension
+        uses: actions/upload-artifact@v4
+        with:
+          name: extension-firefox
+          path: dist/pdf-autofill-firefox.zip
+          retention-days: 30
+
+  release:
+    name: Create Release
+    needs: [build-backend-windows, build-extension]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          cp artifacts/backend-windows-x64/*.zip release/
+          cp artifacts/extension-chrome/*.zip release/
+          cp artifacts/extension-firefox/*.zip release/
+          ls -la release/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: PDF Autofill v${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            release/*.zip
+          body: |
+            ## PDF Autofill v${{ steps.version.outputs.version }}
+            
+            ### Downloads
+            
+            **Backend Server (Windows)**
+            - `pdf-autofill-server-*-windows-x64.zip` - Windows executable (no Python required)
+            
+            **Browser Extensions**
+            - `pdf-autofill-chrome.zip` - Chrome/Chromium extension
+            - `pdf-autofill-firefox.zip` - Firefox extension
+            
+            ### Installation
+            
+            1. **Backend Server**
+               - Download and extract the Windows server ZIP
+               - Install [Tesseract OCR](https://github.com/UB-Mannheim/tesseract/wiki)
+               - Run `pdf-autofill-server.exe` or `Start Server.bat`
+            
+            2. **Chrome Extension**
+               - Go to `chrome://extensions`
+               - Enable "Developer mode"
+               - Click "Load unpacked" and select the extracted extension folder
+               - Or upload to Chrome Web Store
+            
+            3. **Firefox Extension**
+               - Go to `about:debugging#/runtime/this-firefox`
+               - Click "Load Temporary Add-on"
+               - Select the ZIP file
+            
+            ### Requirements
+            
+            - Windows 10/11 (64-bit) for the backend server
+            - Tesseract OCR installed and in PATH
+            - OpenAI API key (can be configured in extension settings)

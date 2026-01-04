@@ -1,0 +1,29 @@
+{
+  "name": "pdf-autofill-extension",
+  "version": "1.0.0",
+  "description": "Cross-browser extension for form autofill using PDF OCR",
+  "scripts": {
+    "build": "npm run build:bundle && npm run build:inject",
+    "build:bundle": "esbuild src/background.ts src/popup.ts src/content.ts --bundle --outdir=dist --format=iife --target=es2020",
+    "build:inject": "node -e \"const fs=require('fs'); const ts=new Date().toISOString(); ['dist/background.js','dist/popup.js','dist/content.js'].forEach(f=>{if(fs.existsSync(f)){fs.writeFileSync(f,fs.readFileSync(f,'utf8').replace(/__BUILD_TIME__/g,ts))}})\"",
+    "build:chrome": "npm run build && cp manifest.chrome.json manifest.json",
+    "build:firefox": "npm run build && cp manifest.firefox.json manifest.json",
+    "package:chrome": "npm run build:chrome && mkdir -p ../dist && zip -r ../dist/pdf-autofill-chrome.zip manifest.json popup.html styles dist icons -x 'node_modules/*' -x 'src/*'",
+    "package:firefox": "npm run build:firefox && mkdir -p ../dist && zip -r ../dist/pdf-autofill-firefox.zip manifest.json popup.html styles dist icons -x 'node_modules/*' -x 'src/*'",
+    "watch": "esbuild src/background.ts src/popup.ts src/content.ts --bundle --outdir=dist --format=iife --target=es2020 --watch",
+    "lint": "eslint src/**/*.ts",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.268",
+    "@types/webextension-polyfill": "^0.10.7",
+    "@typescript-eslint/eslint-plugin": "^6.19.0",
+    "@typescript-eslint/parser": "^6.19.0",
+    "esbuild": "^0.27.2",
+    "eslint": "^8.56.0",
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "ts-pattern": "^5.9.0"
+  }
+}
