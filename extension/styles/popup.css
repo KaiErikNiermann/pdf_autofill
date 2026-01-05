@@ -205,6 +205,60 @@ main {
   word-break: break-all;
 }
 
+/* File list for multiple files */
+.file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.file-list.hidden {
+  display: none;
+}
+
+.file-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: #f0f4f8;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.file-item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: 8px;
+  color: #333;
+}
+
+.file-item-remove {
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: #e0e0e0;
+  border-radius: 50%;
+  font-size: 14px;
+  line-height: 1;
+  color: #666;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.2s, color 0.2s;
+}
+
+.file-item-remove:hover {
+  background: #c5221f;
+  color: white;
+}
+
 /* OCR Mode Section */
 .ocr-mode-section {
   width: 100%;

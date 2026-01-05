@@ -56,7 +56,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true;
     })
     .with('PROCESS_PDF', () => {
-      processPdf(message.pdfBase64, message.formFields, message.tabId, message.ocrMode || 'tesseract', message.mimeType);
+      processPdf(
+        message.pdfBase64,
+        message.formFields,
+        message.tabId,
+        message.ocrMode || 'tesseract',
+        message.mimeType,
+        message.files
+      );
       sendResponse({ started: true });
       return true;
     })
@@ -106,13 +113,21 @@ async function getOcrCapabilities(): Promise<{ tesseract_available: boolean; dee
   return null;
 }
 
+// File input interface for multi-file support
+interface FileInput {
+  file_base64: string;
+  file_name: string;
+  mime_type: string;
+}
+
 // Process PDF or image in background
 async function processPdf(
-  fileBase64: string,
+  fileBase64: string | undefined,
   formFields: unknown[],
   tabId: number,
   ocrMode: string = 'tesseract',
-  mimeType?: string
+  mimeType?: string,
+  files?: FileInput[]
 ): Promise<void> {
   processingState = { status: 'processing', tabId };
 
@@ -121,15 +136,25 @@ async function processPdf(
     const apiKey = await getStoredApiKey();
     
     const requestBody: Record<string, unknown> = {
-      file_base64: fileBase64,
-      pdf_base64: fileBase64, // Legacy support
       form_fields: formFields,
       ocr_mode: ocrMode,
     };
     
-    // Include mime type if provided
-    if (mimeType) {
-      requestBody.mime_type = mimeType;
+    // Handle multi-file or single file
+    if (files && files.length > 0) {
+      requestBody.files = files;
+      console.log(`Processing ${files.length} file(s) with OCR mode:`, ocrMode);
+    } else if (fileBase64) {
+      // Legacy single-file support
+      requestBody.file_base64 = fileBase64;
+      requestBody.pdf_base64 = fileBase64; // Legacy support
+      if (mimeType) {
+        requestBody.mime_type = mimeType;
+      }
+      const fileType = mimeType?.startsWith('image/') ? 'image' : 'PDF';
+      console.log(`Processing ${fileType} with OCR mode:`, ocrMode);
+    } else {
+      throw new Error('No file data provided');
     }
     
     // Include API key if available
@@ -139,9 +164,6 @@ async function processPdf(
     } else {
       console.log('No API key found, sending request without key');
     }
-    
-    const fileType = mimeType?.startsWith('image/') ? 'image' : 'PDF';
-    console.log(`Processing ${fileType} with OCR mode:`, ocrMode);
 
     const response = await fetch(`${API_BASE_URL}/api/process-pdf`, {
       method: 'POST',

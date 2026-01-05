@@ -43,37 +43,59 @@ async def get_ocr_capabilities() -> OCRCapabilitiesResponse:
 @router.post("/process-pdf", response_model=ProcessPdfResponse)
 async def process_pdf(request: ProcessPdfRequest) -> ProcessPdfResponse:
     """
-    Process a PDF or image and match extracted data to form fields.
+    Process one or more PDFs/images and match extracted data to form fields.
 
-    1. Extract text from file using OCR
-    2. Use AI to match extracted data to form fields
-    3. Return mappings for user confirmation
+    1. Extract text from file(s) using OCR
+    2. Concatenate text from multiple files with filename annotations
+    3. Use AI to match extracted data to form fields
+    4. Return mappings for user confirmation
     """
     try:
         # Convert schema OCRMode to service OCRMode
         service_mode = ServiceOCRMode(request.ocr_mode.value)
         
-        # Get the file data (support both legacy pdf_base64 and new file_base64)
-        file_data = request.file_base64 or request.pdf_base64
-        if not file_data:
-            return ProcessPdfResponse(
-                success=False,
-                mappings=[],
-                extracted_text=None,
-                error="No file data provided",
-            )
+        extracted_texts: list[str] = []
         
-        # Step 1: Extract text from file (PDF or image)
-        extracted_text = ocr_service.extract_text(
-            file_data, mode=service_mode, mime_type=request.mime_type
-        )
+        # Check if we have multiple files
+        if request.files and len(request.files) > 0:
+            logger.info("Processing %d files", len(request.files))
+            for file_input in request.files:
+                file_text = ocr_service.extract_text(
+                    file_input.file_base64,
+                    mode=service_mode,
+                    mime_type=file_input.mime_type,
+                )
+                if file_text.strip():
+                    # Annotate with filename
+                    annotated_text = f"--- Content from: {file_input.file_name} ---\n{file_text}"
+                    extracted_texts.append(annotated_text)
+                    logger.debug("Extracted %d chars from %s", len(file_text), file_input.file_name)
+        else:
+            # Single file (legacy support)
+            file_data = request.file_base64 or request.pdf_base64
+            if not file_data:
+                return ProcessPdfResponse(
+                    success=False,
+                    mappings=[],
+                    extracted_text=None,
+                    error="No file data provided",
+                )
+            
+            file_text = ocr_service.extract_text(
+                file_data, mode=service_mode, mime_type=request.mime_type
+            )
+            if file_text.strip():
+                extracted_texts.append(file_text)
+        
+        # Combine all extracted text
+        extracted_text = "\n\n".join(extracted_texts)
 
         if not extracted_text.strip():
             return ProcessPdfResponse(
                 success=False,
                 mappings=[],
                 extracted_text=None,
-                error="Could not extract any text from the PDF",
+                error="Could not extract any text from the file(s)",
             )
 
         # Step 2: Convert form fields to dict format for AI

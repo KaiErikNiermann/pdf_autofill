@@ -184,7 +184,7 @@
 
   // src/content.ts
   (function() {
-    console.log(`[PDF Autofill Content] Build: 2026-01-05T16:12:40.216Z`);
+    console.log(`[PDF Autofill Content] Build: 2026-01-05T17:47:57.020Z`);
   })();
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     console.log("Content script received message:", message);

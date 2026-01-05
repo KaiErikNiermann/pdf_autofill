@@ -184,7 +184,7 @@
 
   // src/background.ts
   (function() {
-    console.log(`[PDF Autofill Background] Build: 2026-01-05T16:12:40.216Z`);
+    console.log(`[PDF Autofill Background] Build: 2026-01-05T17:47:57.020Z`);
   })();
   var API_BASE_URL = "http://localhost:8000";
   var processingState = { status: "idle" };
@@ -210,7 +210,14 @@
       handleApiRequest(message.endpoint, message.method, message.data).then(sendResponse).catch((error) => sendResponse({ error: error.message }));
       return true;
     }).with("PROCESS_PDF", () => {
-      processPdf(message.pdfBase64, message.formFields, message.tabId, message.ocrMode || "tesseract", message.mimeType);
+      processPdf(
+        message.pdfBase64,
+        message.formFields,
+        message.tabId,
+        message.ocrMode || "tesseract",
+        message.mimeType,
+        message.files
+      );
       sendResponse({ started: true });
       return true;
     }).with("GET_PROCESSING_STATE", () => {
@@ -248,19 +255,27 @@
     }
     return null;
   }
-  async function processPdf(fileBase64, formFields, tabId, ocrMode = "tesseract", mimeType) {
+  async function processPdf(fileBase64, formFields, tabId, ocrMode = "tesseract", mimeType, files) {
     processingState = { status: "processing", tabId };
     try {
       const apiKey = await getStoredApiKey();
       const requestBody = {
-        file_base64: fileBase64,
-        pdf_base64: fileBase64,
-        // Legacy support
         form_fields: formFields,
         ocr_mode: ocrMode
       };
-      if (mimeType) {
-        requestBody.mime_type = mimeType;
+      if (files && files.length > 0) {
+        requestBody.files = files;
+        console.log(`Processing ${files.length} file(s) with OCR mode:`, ocrMode);
+      } else if (fileBase64) {
+        requestBody.file_base64 = fileBase64;
+        requestBody.pdf_base64 = fileBase64;
+        if (mimeType) {
+          requestBody.mime_type = mimeType;
+        }
+        const fileType = mimeType?.startsWith("image/") ? "image" : "PDF";
+        console.log(`Processing ${fileType} with OCR mode:`, ocrMode);
+      } else {
+        throw new Error("No file data provided");
       }
       if (apiKey) {
         requestBody.openai_api_key = apiKey;
@@ -268,8 +283,6 @@
       } else {
         console.log("No API key found, sending request without key");
       }
-      const fileType = mimeType?.startsWith("image/") ? "image" : "PDF";
-      console.log(`Processing ${fileType} with OCR mode:`, ocrMode);
       const response = await fetch(`${API_BASE_URL}/api/process-pdf`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

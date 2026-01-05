@@ -184,7 +184,7 @@
 
   // src/popup.ts
   (function() {
-    console.log(`[PDF Autofill Popup] Build: 2026-01-05T16:12:40.216Z`);
+    console.log(`[PDF Autofill Popup] Build: 2026-01-05T17:47:57.020Z`);
   })();
   var SUPPORTED_MIME_TYPES = [
     "application/pdf",
@@ -199,6 +199,7 @@
   var SUPPORTED_EXTENSIONS = [".pdf", ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff"];
   var currentTabId = null;
   var skippedFields = /* @__PURE__ */ new Set();
+  var selectedFiles = [];
   function isValidFile(file) {
     if (SUPPORTED_MIME_TYPES.includes(file.type)) {
       return true;
@@ -215,6 +216,7 @@
   document.addEventListener("DOMContentLoaded", async () => {
     const pdfUpload = document.getElementById("pdfUpload");
     const dropZone = document.getElementById("dropZone");
+    const fileList = document.getElementById("fileList");
     const fileName = document.getElementById("fileName");
     const confirmSection = document.getElementById("confirmSection");
     const mappingsList = document.getElementById("mappingsList");
@@ -327,14 +329,21 @@
       return handled;
     });
     pdfUpload?.addEventListener("change", async (e2) => {
-      const file = e2.target.files?.[0];
-      if (!file) return;
-      if (!isValidFile(file)) {
-        updateStatus("Unsupported file type. Use PDF or image.", "error");
+      const files = e2.target.files;
+      if (!files || files.length === 0) return;
+      const validFiles = [];
+      for (let i2 = 0; i2 < files.length; i2++) {
+        if (isValidFile(files[i2])) {
+          validFiles.push(files[i2]);
+        }
+      }
+      if (validFiles.length === 0) {
+        updateStatus("No valid files selected. Use PDF or image files.", "error");
         return;
       }
-      if (fileName) fileName.textContent = getFileDisplayName(file);
-      await startProcessing(file);
+      selectedFiles = validFiles;
+      updateFileListDisplay();
+      await startProcessing(selectedFiles);
     });
     dropZone?.addEventListener("dragenter", (e2) => {
       e2.preventDefault();
@@ -362,13 +371,19 @@
       dropZone.classList.remove("drag-over");
       const files = e2.dataTransfer?.files;
       if (!files || files.length === 0) return;
-      const file = files[0];
-      if (!isValidFile(file)) {
-        updateStatus("Unsupported file type. Use PDF or image.", "error");
+      const validFiles = [];
+      for (let i2 = 0; i2 < files.length; i2++) {
+        if (isValidFile(files[i2])) {
+          validFiles.push(files[i2]);
+        }
+      }
+      if (validFiles.length === 0) {
+        updateStatus("No valid files dropped. Use PDF or image files.", "error");
         return;
       }
-      if (fileName) fileName.textContent = getFileDisplayName(file);
-      await startProcessing(file);
+      selectedFiles = validFiles;
+      updateFileListDisplay();
+      await startProcessing(selectedFiles);
     });
     dropZone?.addEventListener("click", (e2) => {
       if (e2.target === pdfUpload) return;
@@ -385,15 +400,19 @@
       if (!clipboardData) return;
       const files = clipboardData.files;
       if (files && files.length > 0) {
-        const file = files[0];
-        if (!isValidFile(file)) {
-          updateStatus("Unsupported file type. Use PDF or image.", "error");
+        const validFiles = [];
+        for (let i2 = 0; i2 < files.length; i2++) {
+          if (isValidFile(files[i2])) {
+            validFiles.push(files[i2]);
+          }
+        }
+        if (validFiles.length > 0) {
+          e2.preventDefault();
+          selectedFiles = [...selectedFiles, ...validFiles];
+          updateFileListDisplay();
+          await startProcessing(selectedFiles);
           return;
         }
-        e2.preventDefault();
-        if (fileName) fileName.textContent = getFileDisplayName(file);
-        await startProcessing(file);
-        return;
       }
       const items = clipboardData.items;
       for (let i2 = 0; i2 < items.length; i2++) {
@@ -402,9 +421,10 @@
           const file = item.getAsFile();
           if (file) {
             e2.preventDefault();
-            const displayName = `\u{1F5BC}\uFE0F Pasted image (${item.type.split("/")[1]})`;
-            if (fileName) fileName.textContent = displayName;
-            await startProcessing(file);
+            const pastedFile = new File([file], `pasted-image-${Date.now()}.${item.type.split("/")[1]}`, { type: item.type });
+            selectedFiles = [...selectedFiles, pastedFile];
+            updateFileListDisplay();
+            await startProcessing(selectedFiles);
             return;
           }
         }
@@ -503,10 +523,11 @@
         }, 3e3);
       }
     }
-    async function startProcessing(file) {
+    async function startProcessing(files) {
       showLoading(true);
-      const fileType = file.type.startsWith("image/") ? "image" : "file";
-      updateStatus(`Processing ${fileType}...`, "info");
+      const fileCount = files.length;
+      const fileWord = fileCount === 1 ? "file" : "files";
+      updateStatus(`Processing ${fileCount} ${fileWord}...`, "info");
       try {
         if (!currentTabId) {
           throw new Error("No active tab");
@@ -516,12 +537,19 @@
         if (!formFields || formFields.length === 0) {
           throw new Error("No form fields found on page");
         }
-        const base64Data = await fileToBase64(file);
+        const filesData = [];
+        for (const file of files) {
+          const base64Data = await fileToBase64(file);
+          filesData.push({
+            file_base64: base64Data,
+            file_name: file.name,
+            mime_type: file.type || "application/octet-stream"
+          });
+        }
         const ocrMode = ocrAccurateRadio?.checked ? "deepdoctection" : "tesseract";
         chrome.runtime.sendMessage({
           type: "PROCESS_PDF",
-          pdfBase64: base64Data,
-          mimeType: file.type || void 0,
+          files: filesData,
           formFields,
           tabId: currentTabId,
           ocrMode
@@ -532,6 +560,30 @@
         updateStatus(`Error: ${error.message}`, "error");
         showLoading(false);
       }
+    }
+    function updateFileListDisplay() {
+      if (!fileList) return;
+      if (selectedFiles.length === 0) {
+        fileList.innerHTML = "";
+        fileList.classList.add("hidden");
+        return;
+      }
+      fileList.classList.remove("hidden");
+      fileList.innerHTML = selectedFiles.map((file, index) => `
+      <div class="file-item" data-index="${index}">
+        <span class="file-item-name">${getFileDisplayName(file)}</span>
+        <button class="file-item-remove" data-index="${index}" title="Remove file">\xD7</button>
+      </div>
+    `).join("");
+      fileList.querySelectorAll(".file-item-remove").forEach((btn) => {
+        btn.addEventListener("click", (e2) => {
+          e2.stopPropagation();
+          const index = parseInt(e2.target.dataset.index || "0", 10);
+          selectedFiles.splice(index, 1);
+          updateFileListDisplay();
+        });
+      });
+      if (fileName) fileName.textContent = "";
     }
     function pollForCompletion() {
       const interval = setInterval(async () => {

@@ -57,7 +57,7 @@ class FormTemplate(BaseModel):
     id: str = Field(..., description="Unique template identifier")
     name: str = Field(..., description="Template name")
     description: str | None = Field(None, description="Template description")
-    fields: list[FormField] = Field(default_factory=list, description="Form fields")
+    fields: list[FormField] = Field(default_factory=list, description="Form fields") # type: ignore
 
 
 # PDF Processing schemas
@@ -75,13 +75,29 @@ class FormFieldInput(BaseModel):
     )
 
 
-class ProcessFileRequest(BaseModel):
-    """Request to process a file (PDF or image) and match to form fields."""
+class FileInput(BaseModel):
+    """Individual file input for processing."""
 
     file_base64: str = Field(..., description="Base64 encoded file (PDF or image)")
+    file_name: str = Field("file", description="Original filename for annotation")
     mime_type: str | None = Field(
         None,
         description="MIME type of the file. If not provided, auto-detected.",
+    )
+
+
+class ProcessFileRequest(BaseModel):
+    """Request to process a file (PDF or image) and match to form fields."""
+
+    file_base64: str = Field("", description="Base64 encoded file (PDF or image) - for single file")
+    mime_type: str | None = Field(
+        None,
+        description="MIME type of the file. If not provided, auto-detected.",
+    )
+    # Multi-file support
+    files: list[FileInput] | None = Field(
+        None,
+        description="Multiple files to process. If provided, file_base64 is ignored.",
     )
     form_fields: list[FormFieldInput] = Field(
         ..., description="Form fields from the page"
@@ -121,7 +137,7 @@ class ProcessPdfResponse(BaseModel):
     """Response from PDF processing."""
 
     success: bool = Field(..., description="Whether processing succeeded")
-    mappings: list[FieldMapping] = Field(
+    mappings: list[FieldMapping] = Field( # type: ignore
         default_factory=list, description="Field to value mappings"
     )
     extracted_text: str | None = Field(None, description="Raw extracted text")

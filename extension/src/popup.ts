@@ -32,8 +32,16 @@ interface ProcessingState {
   tabId?: number;
 }
 
+interface FileData {
+  file: File;
+  base64: string;
+  name: string;
+  mimeType: string;
+}
+
 let currentTabId: number | null = null;
 const skippedFields: Set<string> = new Set();
+let selectedFiles: File[] = [];
 
 // OCR Mode type
 type OCRMode = 'tesseract' | 'deepdoctection';
@@ -58,6 +66,7 @@ function getFileDisplayName(file: File): string {
 document.addEventListener('DOMContentLoaded', async () => {
   const pdfUpload = document.getElementById('pdfUpload') as HTMLInputElement;
   const dropZone = document.getElementById('dropZone') as HTMLElement;
+  const fileList = document.getElementById('fileList') as HTMLElement;
   const fileName = document.getElementById('fileName');
   const confirmSection = document.getElementById('confirmSection');
   const mappingsList = document.getElementById('mappingsList');
@@ -203,17 +212,26 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Handle PDF file selection
   pdfUpload?.addEventListener('change', async (e) => {
-    const file = (e.target as HTMLInputElement).files?.[0];
-    if (!file) return;
+    const files = (e.target as HTMLInputElement).files;
+    if (!files || files.length === 0) return;
 
-    if (!isValidFile(file)) {
-      updateStatus('Unsupported file type. Use PDF or image.', 'error');
+    // Convert FileList to array and filter valid files
+    const validFiles: File[] = [];
+    for (let i = 0; i < files.length; i++) {
+      if (isValidFile(files[i])) {
+        validFiles.push(files[i]);
+      }
+    }
+
+    if (validFiles.length === 0) {
+      updateStatus('No valid files selected. Use PDF or image files.', 'error');
       return;
     }
 
-    if (fileName) fileName.textContent = getFileDisplayName(file);
+    selectedFiles = validFiles;
+    updateFileListDisplay();
     
-    await startProcessing(file);
+    await startProcessing(selectedFiles);
   });
 
   // Drag and drop handlers
@@ -249,14 +267,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     const files = e.dataTransfer?.files;
     if (!files || files.length === 0) return;
 
-    const file = files[0];
-    if (!isValidFile(file)) {
-      updateStatus('Unsupported file type. Use PDF or image.', 'error');
+    // Convert FileList to array and filter valid files
+    const validFiles: File[] = [];
+    for (let i = 0; i < files.length; i++) {
+      if (isValidFile(files[i])) {
+        validFiles.push(files[i]);
+      }
+    }
+
+    if (validFiles.length === 0) {
+      updateStatus('No valid files dropped. Use PDF or image files.', 'error');
       return;
     }
 
-    if (fileName) fileName.textContent = getFileDisplayName(file);
-    await startProcessing(file);
+    selectedFiles = validFiles;
+    updateFileListDisplay();
+    await startProcessing(selectedFiles);
   });
 
   // Click on drop zone to trigger file input
@@ -282,15 +308,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Check for files in clipboard
     const files = clipboardData.files;
     if (files && files.length > 0) {
-      const file = files[0];
-      if (!isValidFile(file)) {
-        updateStatus('Unsupported file type. Use PDF or image.', 'error');
+      const validFiles: File[] = [];
+      for (let i = 0; i < files.length; i++) {
+        if (isValidFile(files[i])) {
+          validFiles.push(files[i]);
+        }
+      }
+      if (validFiles.length > 0) {
+        e.preventDefault();
+        // Add to existing selection
+        selectedFiles = [...selectedFiles, ...validFiles];
+        updateFileListDisplay();
+        await startProcessing(selectedFiles);
         return;
       }
-      e.preventDefault();
-      if (fileName) fileName.textContent = getFileDisplayName(file);
-      await startProcessing(file);
-      return;
     }
 
     // Check for image data in clipboard items
@@ -301,9 +332,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         const file = item.getAsFile();
         if (file) {
           e.preventDefault();
-          const displayName = `🖼️ Pasted image (${item.type.split('/')[1]})`;
-          if (fileName) fileName.textContent = displayName;
-          await startProcessing(file);
+          // Create a named file from pasted image
+          const pastedFile = new File([file], `pasted-image-${Date.now()}.${item.type.split('/')[1]}`, { type: item.type });
+          selectedFiles = [...selectedFiles, pastedFile];
+          updateFileListDisplay();
+          await startProcessing(selectedFiles);
           return;
         }
       }
@@ -424,10 +457,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  async function startProcessing(file: File): Promise<void> {
+  async function startProcessing(files: File[]): Promise<void> {
     showLoading(true);
-    const fileType = file.type.startsWith('image/') ? 'image' : 'file';
-    updateStatus(`Processing ${fileType}...`, 'info');
+    const fileCount = files.length;
+    const fileWord = fileCount === 1 ? 'file' : 'files';
+    updateStatus(`Processing ${fileCount} ${fileWord}...`, 'info');
 
     try {
       if (!currentTabId) {
@@ -444,17 +478,24 @@ document.addEventListener('DOMContentLoaded', async () => {
         throw new Error('No form fields found on page');
       }
 
-      // Convert file to base64
-      const base64Data = await fileToBase64(file);
+      // Convert all files to base64
+      const filesData: { file_base64: string; file_name: string; mime_type: string }[] = [];
+      for (const file of files) {
+        const base64Data = await fileToBase64(file);
+        filesData.push({
+          file_base64: base64Data,
+          file_name: file.name,
+          mime_type: file.type || 'application/octet-stream',
+        });
+      }
       
       // Get selected OCR mode
       const ocrMode = ocrAccurateRadio?.checked ? 'deepdoctection' : 'tesseract';
 
-      // Send to background for processing (this won't block)
+      // Send to background for processing
       chrome.runtime.sendMessage({
         type: 'PROCESS_PDF',
-        pdfBase64: base64Data,
-        mimeType: file.type || undefined,
+        files: filesData,
         formFields: formFields,
         tabId: currentTabId,
         ocrMode: ocrMode,
@@ -468,6 +509,38 @@ document.addEventListener('DOMContentLoaded', async () => {
       updateStatus(`Error: ${(error as Error).message}`, 'error');
       showLoading(false);
     }
+  }
+
+  // Update the file list display
+  function updateFileListDisplay(): void {
+    if (!fileList) return;
+
+    if (selectedFiles.length === 0) {
+      fileList.innerHTML = '';
+      fileList.classList.add('hidden');
+      return;
+    }
+
+    fileList.classList.remove('hidden');
+    fileList.innerHTML = selectedFiles.map((file, index) => `
+      <div class="file-item" data-index="${index}">
+        <span class="file-item-name">${getFileDisplayName(file)}</span>
+        <button class="file-item-remove" data-index="${index}" title="Remove file">×</button>
+      </div>
+    `).join('');
+
+    // Add click handlers for remove buttons
+    fileList.querySelectorAll('.file-item-remove').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const index = parseInt((e.target as HTMLElement).dataset.index || '0', 10);
+        selectedFiles.splice(index, 1);
+        updateFileListDisplay();
+      });
+    });
+
+    // Hide the old single file name display
+    if (fileName) fileName.textContent = '';
   }
 
   function pollForCompletion(): void {
