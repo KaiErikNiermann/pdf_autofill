@@ -184,7 +184,7 @@
 
   // src/background.ts
   (function() {
-    console.log(`[PDF Autofill Background] Build: 2026-01-04T14:20:56.297Z`);
+    console.log(`[PDF Autofill Background] Build: 2026-01-05T16:12:40.216Z`);
   })();
   var API_BASE_URL = "http://localhost:8000";
   var processingState = { status: "idle" };
@@ -206,11 +206,11 @@
   }
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     console.log("Background received message:", message);
-    const handled = M(message.type).with("API_REQUEST", () => {
+    return M(message.type).with("API_REQUEST", () => {
       handleApiRequest(message.endpoint, message.method, message.data).then(sendResponse).catch((error) => sendResponse({ error: error.message }));
       return true;
     }).with("PROCESS_PDF", () => {
-      processPdf(message.pdfBase64, message.formFields, message.tabId);
+      processPdf(message.pdfBase64, message.formFields, message.tabId, message.ocrMode || "tesseract", message.mimeType);
       sendResponse({ started: true });
       return true;
     }).with("GET_PROCESSING_STATE", () => {
@@ -233,23 +233,43 @@
     }).with("CLEAR_API_KEY", () => {
       clearStoredApiKey().then(() => sendResponse({ success: true }));
       return true;
+    }).with("GET_OCR_CAPABILITIES", () => {
+      getOcrCapabilities().then(sendResponse);
+      return true;
     }).otherwise(() => false);
-    return handled;
   });
-  async function processPdf(pdfBase64, formFields, tabId) {
+  async function getOcrCapabilities() {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/ocr-capabilities`);
+      if (response.ok) {
+        return await response.json();
+      }
+    } catch {
+    }
+    return null;
+  }
+  async function processPdf(fileBase64, formFields, tabId, ocrMode = "tesseract", mimeType) {
     processingState = { status: "processing", tabId };
     try {
       const apiKey = await getStoredApiKey();
       const requestBody = {
-        pdf_base64: pdfBase64,
-        form_fields: formFields
+        file_base64: fileBase64,
+        pdf_base64: fileBase64,
+        // Legacy support
+        form_fields: formFields,
+        ocr_mode: ocrMode
       };
+      if (mimeType) {
+        requestBody.mime_type = mimeType;
+      }
       if (apiKey) {
         requestBody.openai_api_key = apiKey;
         console.log("Sending request with API key:", `sk-...${apiKey.slice(-4)}`);
       } else {
         console.log("No API key found, sending request without key");
       }
+      const fileType = mimeType?.startsWith("image/") ? "image" : "PDF";
+      console.log(`Processing ${fileType} with OCR mode:`, ocrMode);
       const response = await fetch(`${API_BASE_URL}/api/process-pdf`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -257,16 +277,9 @@
       });
       if (!response.ok) {
         const error = await response.json();
-        const errorMessage = error.detail || "Server error";
-        let friendlyMessage = errorMessage;
-        if (response.status === 401) {
-          friendlyMessage = "Invalid or missing API key. Please check your OpenAI API key in Settings.";
-        } else if (response.status === 429) {
-          friendlyMessage = "Rate limit exceeded. Please wait a moment and try again.";
-        } else if (response.status === 503) {
-          friendlyMessage = "Unable to connect to OpenAI. Please check your internet connection.";
-        }
-        throw new Error(friendlyMessage);
+        throw new Error(
+          M(response.status).with(401, () => "Invalid or missing API key. Please check your OpenAI API key in Settings.").with(429, () => "Rate limit exceeded. Please wait a moment and try again.").with(503, () => "Unable to connect to OpenAI. Please check your internet connection.").otherwise(() => error.detail || "Server error")
+        );
       }
       const result = await response.json();
       if (!result.success) {

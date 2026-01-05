@@ -104,7 +104,7 @@ if __name__ == "__main__":
 
 def get_hidden_imports() -> list[str]:
     """Get list of hidden imports for PyInstaller."""
-    return [
+    imports = [
         # FastAPI and dependencies
         "fastapi",
         "starlette",
@@ -160,6 +160,29 @@ def get_hidden_imports() -> list[str]:
         "app.services.ai_matcher_service",
         "app.services.ocr_service",
     ]
+    
+    # Optional: Add deepdoctection imports if installed
+    try:
+        import deepdoctection  # noqa: F401
+        imports.extend([
+            "deepdoctection",
+            "deepdoctection.pipe",
+            "deepdoctection.datapoint",
+            "deepdoctection.extern",
+            "deepdoctection.mapper",
+            "timm",
+            "transformers",
+            "doctr",
+            "doctr.models",
+            "doctr.io",
+            "torch",
+            "torchvision",
+        ])
+        print("Including deepdoctection in build")
+    except ImportError:
+        print("deepdoctection not installed - skipping in build")
+    
+    return imports
 
 
 def get_data_files() -> list[tuple[str, str]]:

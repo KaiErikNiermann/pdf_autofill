@@ -1,10 +1,13 @@
 """AI service for matching PDF data to form fields."""
 
 import json
+import logging
 
 from openai import OpenAI, AuthenticationError, APIConnectionError, RateLimitError
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class AIMatcherService:
@@ -22,14 +25,14 @@ class AIMatcherService:
         if api_key:
             api_key = api_key.strip()
         
-        print(f"[AI Service] _get_client called with api_key: {'sk-...' + api_key[-4:] if api_key else 'None'}")
-        print(f"[AI Service] API key length: {len(api_key) if api_key else 0}")
+        logger.debug("_get_client called with api_key: %s", f"sk-...{api_key[-4:]}" if api_key else "None")
+        logger.debug("API key length: %d", len(api_key) if api_key else 0)
         
         if api_key:
-            print(f"[AI Service] Creating new OpenAI client with user-provided key")
+            logger.debug("Creating new OpenAI client with user-provided key")
             return OpenAI(api_key=api_key)
         if self.default_client:
-            print(f"[AI Service] Using default client from settings")
+            logger.debug("Using default client from settings")
             return self.default_client
         raise ValueError(
             "No OpenAI API key configured. Please provide your API key in the extension settings."
@@ -163,25 +166,25 @@ JSON Response:"""
             return mappings  # type: ignore[no-any-return]
 
         except AuthenticationError as e:
-            print(f"[AI Service] AuthenticationError: {e}")
+            logger.error("OpenAI AuthenticationError: %s", e)
             raise ValueError(
                 "Invalid OpenAI API key. Please check your API key and try again."
             ) from e
         except APIConnectionError as e:
-            print(f"[AI Service] APIConnectionError: {e}")
+            logger.error("OpenAI APIConnectionError: %s", e)
             raise ConnectionError(
                 "Unable to connect to OpenAI. Please check your internet connection."
             ) from e
         except RateLimitError as e:
-            print(f"[AI Service] RateLimitError: {e}")
+            logger.warning("OpenAI RateLimitError: %s", e)
             raise RuntimeError(
                 "OpenAI rate limit exceeded. Please wait a moment and try again."
             ) from e
         except json.JSONDecodeError as e:
-            print(f"[AI Service] JSON parsing error: {e}")
+            logger.warning("JSON parsing error from AI response: %s", e)
             return self._empty_mappings(form_fields)
         except Exception as e:
-            print(f"[AI Service] Unexpected error: {type(e).__name__}: {e}")
+            logger.exception("Unexpected error in AI matching: %s", e)
             raise RuntimeError(f"AI processing failed: {e!s}") from e
 
     def _empty_mappings(

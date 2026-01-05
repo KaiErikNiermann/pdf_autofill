@@ -1,6 +1,15 @@
 """Pydantic schemas for API request/response models."""
 
+from enum import Enum
+from typing import Any
+
 from pydantic import BaseModel, Field
+
+
+class OCRMode(str, Enum):
+    """Available OCR modes."""
+    TESSERACT = "tesseract"  # Fast, basic OCR
+    DEEPDOCTECTION = "deepdoctection"  # Slower, structure-preserving OCR
 
 
 class HealthResponse(BaseModel):
@@ -66,16 +75,37 @@ class FormFieldInput(BaseModel):
     )
 
 
-class ProcessPdfRequest(BaseModel):
-    """Request to process a PDF and match to form fields."""
+class ProcessFileRequest(BaseModel):
+    """Request to process a file (PDF or image) and match to form fields."""
 
-    pdf_base64: str = Field(..., description="Base64 encoded PDF file")
+    file_base64: str = Field(..., description="Base64 encoded file (PDF or image)")
+    mime_type: str | None = Field(
+        None,
+        description="MIME type of the file. If not provided, auto-detected.",
+    )
     form_fields: list[FormFieldInput] = Field(
         ..., description="Form fields from the page"
     )
     openai_api_key: str | None = Field(
         None, description="User-provided OpenAI API key (optional)"
     )
+    ocr_mode: OCRMode = Field(
+        OCRMode.TESSERACT,
+        description="OCR mode: 'tesseract' (fast) or 'deepdoctection' (accurate)",
+    )
+
+
+# Alias for backwards compatibility
+class ProcessPdfRequest(ProcessFileRequest):
+    """Request to process a PDF and match to form fields. Alias for ProcessFileRequest."""
+
+    # Allow both 'file_base64' and legacy 'pdf_base64'
+    pdf_base64: str | None = Field(None, description="Legacy: Base64 encoded PDF file")
+
+    def model_post_init(self, __context: Any) -> None:
+        """Handle legacy pdf_base64 field."""
+        if self.pdf_base64 and not self.file_base64:
+            object.__setattr__(self, 'file_base64', self.pdf_base64)
 
 
 class FieldMapping(BaseModel):
@@ -96,3 +126,19 @@ class ProcessPdfResponse(BaseModel):
     )
     extracted_text: str | None = Field(None, description="Raw extracted text")
     error: str | None = Field(None, description="Error message if failed")
+
+
+class OCRCapabilitiesResponse(BaseModel):
+    """Response with available OCR capabilities."""
+
+    tesseract_available: bool = Field(
+        ..., description="Whether Tesseract OCR is available"
+    )
+    deepdoctection_available: bool = Field(
+        ..., description="Whether deepdoctection is available"
+    )
+    default_mode: OCRMode = Field(..., description="The default OCR mode")
+    supported_formats: list[str] = Field(
+        default_factory=lambda: [".pdf", ".png", ".jpg", ".webp", ".gif", ".bmp", ".tiff"],
+        description="Supported file extensions",
+    )

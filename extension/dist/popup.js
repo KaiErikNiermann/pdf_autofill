@@ -184,12 +184,37 @@
 
   // src/popup.ts
   (function() {
-    console.log(`[PDF Autofill Popup] Build: 2026-01-04T14:20:56.297Z`);
+    console.log(`[PDF Autofill Popup] Build: 2026-01-05T16:12:40.216Z`);
   })();
+  var SUPPORTED_MIME_TYPES = [
+    "application/pdf",
+    "image/png",
+    "image/jpeg",
+    "image/jpg",
+    "image/webp",
+    "image/gif",
+    "image/bmp",
+    "image/tiff"
+  ];
+  var SUPPORTED_EXTENSIONS = [".pdf", ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff"];
   var currentTabId = null;
   var skippedFields = /* @__PURE__ */ new Set();
+  function isValidFile(file) {
+    if (SUPPORTED_MIME_TYPES.includes(file.type)) {
+      return true;
+    }
+    const ext = "." + file.name.split(".").pop()?.toLowerCase();
+    return SUPPORTED_EXTENSIONS.includes(ext);
+  }
+  function getFileDisplayName(file) {
+    const ext = file.name.split(".").pop()?.toLowerCase() || "";
+    const isImage = ["png", "jpg", "jpeg", "webp", "gif", "bmp", "tiff"].includes(ext);
+    const icon = isImage ? "\u{1F5BC}\uFE0F" : "\u{1F4C4}";
+    return `${icon} ${file.name}`;
+  }
   document.addEventListener("DOMContentLoaded", async () => {
     const pdfUpload = document.getElementById("pdfUpload");
+    const dropZone = document.getElementById("dropZone");
     const fileName = document.getElementById("fileName");
     const confirmSection = document.getElementById("confirmSection");
     const mappingsList = document.getElementById("mappingsList");
@@ -197,6 +222,9 @@
     const cancelBtn = document.getElementById("cancelBtn");
     const loading = document.getElementById("loading");
     const clearExistingCheckbox = document.getElementById("clearExisting");
+    const ocrFastRadio = document.getElementById("ocrFast");
+    const ocrAccurateRadio = document.getElementById("ocrAccurate");
+    const ocrModeHint = document.getElementById("ocrModeHint");
     const settingsToggle = document.getElementById("settingsToggle");
     const settingsPanel = document.getElementById("settingsPanel");
     const apiKeyInput = document.getElementById("apiKeyInput");
@@ -204,8 +232,14 @@
     const saveApiKeyBtn = document.getElementById("saveApiKey");
     const clearApiKeyBtn = document.getElementById("clearApiKey");
     const apiKeyStatus = document.getElementById("apiKeyStatus");
-    const storage = await chrome.storage.local.get("targetTabId");
+    const storage = await chrome.storage.local.get(["targetTabId", "ocrMode"]);
     currentTabId = storage.targetTabId || null;
+    const savedOcrMode = storage.ocrMode;
+    if (savedOcrMode === "deepdoctection" && ocrAccurateRadio) {
+      ocrAccurateRadio.checked = true;
+      updateOcrModeHint("deepdoctection");
+    }
+    await checkOcrCapabilities();
     await loadApiKeyStatus(true);
     if (currentTabId) {
       try {
@@ -233,6 +267,50 @@
     } else if (state.status === "error") {
       updateStatus(`Error: ${state.error}`, "error");
     }
+    ocrFastRadio?.addEventListener("change", () => {
+      if (ocrFastRadio.checked) {
+        saveOcrMode("tesseract");
+        updateOcrModeHint("tesseract");
+      }
+    });
+    ocrAccurateRadio?.addEventListener("change", () => {
+      if (ocrAccurateRadio.checked) {
+        saveOcrMode("deepdoctection");
+        updateOcrModeHint("deepdoctection");
+      }
+    });
+    function updateOcrModeHint(mode) {
+      if (!ocrModeHint) return;
+      if (mode === "tesseract") {
+        ocrModeHint.textContent = "Tesseract: Quick scan, good for clean documents";
+      } else {
+        ocrModeHint.textContent = "deepdoctection: Structure-preserving, better for complex layouts";
+      }
+    }
+    async function saveOcrMode(mode) {
+      await chrome.storage.local.set({ ocrMode: mode });
+    }
+    async function checkOcrCapabilities() {
+      try {
+        const response = await chrome.runtime.sendMessage({ type: "GET_OCR_CAPABILITIES" });
+        if (response && !response.deepdoctection_available) {
+          if (ocrAccurateRadio) {
+            ocrAccurateRadio.disabled = true;
+            const label = ocrAccurateRadio.nextElementSibling;
+            if (label) {
+              label.classList.add("disabled");
+              label.title = "deepdoctection not installed on server";
+            }
+          }
+          if (ocrAccurateRadio?.checked) {
+            ocrFastRadio.checked = true;
+            saveOcrMode("tesseract");
+            updateOcrModeHint("tesseract");
+          }
+        }
+      } catch {
+      }
+    }
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       const handled = M(message.type).with("PROCESSING_COMPLETE", () => {
         showLoading(false);
@@ -251,8 +329,86 @@
     pdfUpload?.addEventListener("change", async (e2) => {
       const file = e2.target.files?.[0];
       if (!file) return;
-      if (fileName) fileName.textContent = file.name;
+      if (!isValidFile(file)) {
+        updateStatus("Unsupported file type. Use PDF or image.", "error");
+        return;
+      }
+      if (fileName) fileName.textContent = getFileDisplayName(file);
       await startProcessing(file);
+    });
+    dropZone?.addEventListener("dragenter", (e2) => {
+      e2.preventDefault();
+      e2.stopPropagation();
+      dropZone.classList.add("drag-over");
+    });
+    dropZone?.addEventListener("dragover", (e2) => {
+      e2.preventDefault();
+      e2.stopPropagation();
+      dropZone.classList.add("drag-over");
+    });
+    dropZone?.addEventListener("dragleave", (e2) => {
+      e2.preventDefault();
+      e2.stopPropagation();
+      const rect = dropZone.getBoundingClientRect();
+      const x2 = e2.clientX;
+      const y2 = e2.clientY;
+      if (x2 < rect.left || x2 >= rect.right || y2 < rect.top || y2 >= rect.bottom) {
+        dropZone.classList.remove("drag-over");
+      }
+    });
+    dropZone?.addEventListener("drop", async (e2) => {
+      e2.preventDefault();
+      e2.stopPropagation();
+      dropZone.classList.remove("drag-over");
+      const files = e2.dataTransfer?.files;
+      if (!files || files.length === 0) return;
+      const file = files[0];
+      if (!isValidFile(file)) {
+        updateStatus("Unsupported file type. Use PDF or image.", "error");
+        return;
+      }
+      if (fileName) fileName.textContent = getFileDisplayName(file);
+      await startProcessing(file);
+    });
+    dropZone?.addEventListener("click", (e2) => {
+      if (e2.target === pdfUpload) return;
+      pdfUpload?.click();
+    });
+    dropZone?.addEventListener("keydown", (e2) => {
+      if (e2.key === "Enter" || e2.key === " ") {
+        e2.preventDefault();
+        pdfUpload?.click();
+      }
+    });
+    document.addEventListener("paste", async (e2) => {
+      const clipboardData = e2.clipboardData;
+      if (!clipboardData) return;
+      const files = clipboardData.files;
+      if (files && files.length > 0) {
+        const file = files[0];
+        if (!isValidFile(file)) {
+          updateStatus("Unsupported file type. Use PDF or image.", "error");
+          return;
+        }
+        e2.preventDefault();
+        if (fileName) fileName.textContent = getFileDisplayName(file);
+        await startProcessing(file);
+        return;
+      }
+      const items = clipboardData.items;
+      for (let i2 = 0; i2 < items.length; i2++) {
+        const item = items[i2];
+        if (item.type.startsWith("image/")) {
+          const file = item.getAsFile();
+          if (file) {
+            e2.preventDefault();
+            const displayName = `\u{1F5BC}\uFE0F Pasted image (${item.type.split("/")[1]})`;
+            if (fileName) fileName.textContent = displayName;
+            await startProcessing(file);
+            return;
+          }
+        }
+      }
     });
     confirmBtn?.addEventListener("click", async () => {
       const state2 = await getProcessingState();
@@ -349,7 +505,8 @@
     }
     async function startProcessing(file) {
       showLoading(true);
-      updateStatus("Processing PDF...", "info");
+      const fileType = file.type.startsWith("image/") ? "image" : "file";
+      updateStatus(`Processing ${fileType}...`, "info");
       try {
         if (!currentTabId) {
           throw new Error("No active tab");
@@ -359,12 +516,15 @@
         if (!formFields || formFields.length === 0) {
           throw new Error("No form fields found on page");
         }
-        const base64Pdf = await fileToBase64(file);
+        const base64Data = await fileToBase64(file);
+        const ocrMode = ocrAccurateRadio?.checked ? "deepdoctection" : "tesseract";
         chrome.runtime.sendMessage({
           type: "PROCESS_PDF",
-          pdfBase64: base64Pdf,
+          pdfBase64: base64Data,
+          mimeType: file.type || void 0,
           formFields,
-          tabId: currentTabId
+          tabId: currentTabId,
+          ocrMode
         });
         pollForCompletion();
       } catch (error) {

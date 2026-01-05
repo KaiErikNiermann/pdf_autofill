@@ -4,6 +4,20 @@ import { match } from 'ts-pattern';
 
 (function() { console.log(`[PDF Autofill Popup] Build: __BUILD_TIME__`); })();
 
+// Supported file types
+const SUPPORTED_MIME_TYPES = [
+  'application/pdf',
+  'image/png',
+  'image/jpeg',
+  'image/jpg',
+  'image/webp',
+  'image/gif',
+  'image/bmp',
+  'image/tiff',
+];
+
+const SUPPORTED_EXTENSIONS = ['.pdf', '.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.tiff'];
+
 interface FieldMapping {
   fieldId: string;
   fieldName: string;
@@ -21,8 +35,29 @@ interface ProcessingState {
 let currentTabId: number | null = null;
 const skippedFields: Set<string> = new Set();
 
+// OCR Mode type
+type OCRMode = 'tesseract' | 'deepdoctection';
+
+function isValidFile(file: File): boolean {
+  // Check MIME type
+  if (SUPPORTED_MIME_TYPES.includes(file.type)) {
+    return true;
+  }
+  // Check extension as fallback
+  const ext = '.' + file.name.split('.').pop()?.toLowerCase();
+  return SUPPORTED_EXTENSIONS.includes(ext);
+}
+
+function getFileDisplayName(file: File): string {
+  const ext = file.name.split('.').pop()?.toLowerCase() || '';
+  const isImage = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tiff'].includes(ext);
+  const icon = isImage ? '🖼️' : '📄';
+  return `${icon} ${file.name}`;
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
   const pdfUpload = document.getElementById('pdfUpload') as HTMLInputElement;
+  const dropZone = document.getElementById('dropZone') as HTMLElement;
   const fileName = document.getElementById('fileName');
   const confirmSection = document.getElementById('confirmSection');
   const mappingsList = document.getElementById('mappingsList');
@@ -30,6 +65,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   const cancelBtn = document.getElementById('cancelBtn');
   const loading = document.getElementById('loading');
   const clearExistingCheckbox = document.getElementById('clearExisting') as HTMLInputElement;
+
+  // OCR Mode elements
+  const ocrFastRadio = document.getElementById('ocrFast') as HTMLInputElement;
+  const ocrAccurateRadio = document.getElementById('ocrAccurate') as HTMLInputElement;
+  const ocrModeHint = document.getElementById('ocrModeHint');
 
   // Settings elements
   const settingsToggle = document.getElementById('settingsToggle');
@@ -41,8 +81,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   const apiKeyStatus = document.getElementById('apiKeyStatus');
 
   // Get target tab from storage (set when icon was clicked)
-  const storage = await chrome.storage.local.get('targetTabId');
+  const storage = await chrome.storage.local.get(['targetTabId', 'ocrMode']);
   currentTabId = storage.targetTabId || null;
+  
+  // Load saved OCR mode preference
+  const savedOcrMode = storage.ocrMode as OCRMode | undefined;
+  if (savedOcrMode === 'deepdoctection' && ocrAccurateRadio) {
+    ocrAccurateRadio.checked = true;
+    updateOcrModeHint('deepdoctection');
+  }
+  
+  // Check OCR capabilities from backend
+  await checkOcrCapabilities();
   
   // Load saved API key status (show info if key detected on startup)
   await loadApiKeyStatus(true);
@@ -76,6 +126,59 @@ document.addEventListener('DOMContentLoaded', async () => {
   } else if (state.status === 'error') {
     updateStatus(`Error: ${state.error}`, 'error');
   }
+  
+  // OCR mode change handlers
+  ocrFastRadio?.addEventListener('change', () => {
+    if (ocrFastRadio.checked) {
+      saveOcrMode('tesseract');
+      updateOcrModeHint('tesseract');
+    }
+  });
+  
+  ocrAccurateRadio?.addEventListener('change', () => {
+    if (ocrAccurateRadio.checked) {
+      saveOcrMode('deepdoctection');
+      updateOcrModeHint('deepdoctection');
+    }
+  });
+  
+  function updateOcrModeHint(mode: OCRMode) {
+    if (!ocrModeHint) return;
+    if (mode === 'tesseract') {
+      ocrModeHint.textContent = 'Tesseract: Quick scan, good for clean documents';
+    } else {
+      ocrModeHint.textContent = 'deepdoctection: Structure-preserving, better for complex layouts';
+    }
+  }
+  
+  async function saveOcrMode(mode: OCRMode) {
+    await chrome.storage.local.set({ ocrMode: mode });
+  }
+  
+  async function checkOcrCapabilities() {
+    try {
+      const response = await chrome.runtime.sendMessage({ type: 'GET_OCR_CAPABILITIES' });
+      if (response && !response.deepdoctection_available) {
+        // Disable the accurate option if deepdoctection is not available
+        if (ocrAccurateRadio) {
+          ocrAccurateRadio.disabled = true;
+          const label = ocrAccurateRadio.nextElementSibling as HTMLElement;
+          if (label) {
+            label.classList.add('disabled');
+            label.title = 'deepdoctection not installed on server';
+          }
+        }
+        // Force tesseract if deepdoctection was selected but not available
+        if (ocrAccurateRadio?.checked) {
+          ocrFastRadio.checked = true;
+          saveOcrMode('tesseract');
+          updateOcrModeHint('tesseract');
+        }
+      }
+    } catch {
+      // Server not available, ignore
+    }
+  }
 
   // Listen for background messages
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -103,9 +206,108 @@ document.addEventListener('DOMContentLoaded', async () => {
     const file = (e.target as HTMLInputElement).files?.[0];
     if (!file) return;
 
-    if (fileName) fileName.textContent = file.name;
+    if (!isValidFile(file)) {
+      updateStatus('Unsupported file type. Use PDF or image.', 'error');
+      return;
+    }
+
+    if (fileName) fileName.textContent = getFileDisplayName(file);
     
     await startProcessing(file);
+  });
+
+  // Drag and drop handlers
+  dropZone?.addEventListener('dragenter', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dropZone.classList.add('drag-over');
+  });
+
+  dropZone?.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dropZone.classList.add('drag-over');
+  });
+
+  dropZone?.addEventListener('dragleave', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Only remove if we're leaving the drop zone entirely
+    const rect = dropZone.getBoundingClientRect();
+    const x = e.clientX;
+    const y = e.clientY;
+    if (x < rect.left || x >= rect.right || y < rect.top || y >= rect.bottom) {
+      dropZone.classList.remove('drag-over');
+    }
+  });
+
+  dropZone?.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dropZone.classList.remove('drag-over');
+
+    const files = e.dataTransfer?.files;
+    if (!files || files.length === 0) return;
+
+    const file = files[0];
+    if (!isValidFile(file)) {
+      updateStatus('Unsupported file type. Use PDF or image.', 'error');
+      return;
+    }
+
+    if (fileName) fileName.textContent = getFileDisplayName(file);
+    await startProcessing(file);
+  });
+
+  // Click on drop zone to trigger file input
+  dropZone?.addEventListener('click', (e) => {
+    // Don't trigger if clicking the file input itself
+    if (e.target === pdfUpload) return;
+    pdfUpload?.click();
+  });
+
+  // Keyboard support for drop zone
+  dropZone?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      pdfUpload?.click();
+    }
+  });
+
+  // Paste handler (works globally in popup)
+  document.addEventListener('paste', async (e) => {
+    const clipboardData = e.clipboardData;
+    if (!clipboardData) return;
+
+    // Check for files in clipboard
+    const files = clipboardData.files;
+    if (files && files.length > 0) {
+      const file = files[0];
+      if (!isValidFile(file)) {
+        updateStatus('Unsupported file type. Use PDF or image.', 'error');
+        return;
+      }
+      e.preventDefault();
+      if (fileName) fileName.textContent = getFileDisplayName(file);
+      await startProcessing(file);
+      return;
+    }
+
+    // Check for image data in clipboard items
+    const items = clipboardData.items;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) {
+          e.preventDefault();
+          const displayName = `🖼️ Pasted image (${item.type.split('/')[1]})`;
+          if (fileName) fileName.textContent = displayName;
+          await startProcessing(file);
+          return;
+        }
+      }
+    }
   });
 
   // Confirm button - fill the form
@@ -224,7 +426,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   async function startProcessing(file: File): Promise<void> {
     showLoading(true);
-    updateStatus('Processing PDF...', 'info');
+    const fileType = file.type.startsWith('image/') ? 'image' : 'file';
+    updateStatus(`Processing ${fileType}...`, 'info');
 
     try {
       if (!currentTabId) {
@@ -241,15 +444,20 @@ document.addEventListener('DOMContentLoaded', async () => {
         throw new Error('No form fields found on page');
       }
 
-      // Convert PDF to base64
-      const base64Pdf = await fileToBase64(file);
+      // Convert file to base64
+      const base64Data = await fileToBase64(file);
+      
+      // Get selected OCR mode
+      const ocrMode = ocrAccurateRadio?.checked ? 'deepdoctection' : 'tesseract';
 
       // Send to background for processing (this won't block)
       chrome.runtime.sendMessage({
         type: 'PROCESS_PDF',
-        pdfBase64: base64Pdf,
+        pdfBase64: base64Data,
+        mimeType: file.type || undefined,
         formFields: formFields,
         tabId: currentTabId,
+        ocrMode: ocrMode,
       });
 
       // Start polling (in case popup stays open)

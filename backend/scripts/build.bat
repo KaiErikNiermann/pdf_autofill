@@ -157,6 +157,23 @@ REM Install project dependencies directly with pip (skip Poetry for compatibilit
 echo Installing project dependencies...
 pip install fastapi uvicorn[standard] pydantic pydantic-settings httpx openai pytesseract pdf2image pillow pymupdf
 
+REM Optional: Install deepdoctection for advanced OCR (heavy dependencies)
+echo.
+echo ========================================
+echo  Optional: Install deepdoctection?
+echo ========================================
+echo deepdoctection provides structure-preserving OCR but adds ~2GB of dependencies.
+echo.
+set /p INSTALL_DD="Install deepdoctection? (y/N): "
+if /i "%INSTALL_DD%"=="y" (
+    echo Installing deepdoctection and dependencies...
+    pip install deepdoctection timm transformers python-doctr
+    echo deepdoctection installed!
+) else (
+    echo Skipping deepdoctection. You can install it later with:
+    echo   pip install deepdoctection timm transformers python-doctr
+)
+
 echo.
 echo Building executable...
 python "%BACKEND_DIR%\scripts\build_exe.py"

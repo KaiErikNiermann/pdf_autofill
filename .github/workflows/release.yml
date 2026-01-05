@@ -10,6 +10,11 @@ on:
         description: 'Version to release (e.g., 1.0.0)'
         required: true
         type: string
+      include_deepdoctection:
+        description: 'Include deepdoctection (adds ~2GB to backend)'
+        required: false
+        type: boolean
+        default: false
 
 env:
   PYTHON_VERSION: '3.13'
@@ -47,6 +52,12 @@ jobs:
         run: |
           poetry config virtualenvs.create false
           poetry install --no-interaction --no-root
+
+      - name: Install deepdoctection (optional)
+        if: ${{ github.event.inputs.include_deepdoctection == 'true' }}
+        working-directory: backend
+        run: |
+          pip install deepdoctection timm transformers python-doctr
 
       - name: Build executable
         working-directory: backend

@@ -589,31 +589,73 @@ function tryFillSearchableSelect(fieldId: string, value: string): boolean {
     return false;
   }
   
-  console.log(`[SearchableSelect] Found search input for ${fieldId}, attempting to select "${value}"`);
+  // Check if this is a multi-select by looking for selected-items container or multi-select class
+  const isMultiSelect = wrapper?.classList.contains('multi-select') || 
+                        wrapper?.querySelector('.selected-items') !== null ||
+                        wrapper?.querySelector('[class*="multi"]') !== null;
+  
+  // Split comma-separated values for multi-selects, or if value contains comma
+  const values = value.includes(',') || isMultiSelect 
+    ? value.split(',').map(v => v.trim()).filter(v => v) 
+    : [value];
+  
+  console.log(`[SearchableSelect] Found search input for ${fieldId}, attempting to select ${values.length} value(s): "${values.join('", "')}"`);
+  
+  // Process values sequentially using async chain
+  processSearchableValuesSequentially(fieldId, values, searchInput, wrapper, 0);
+  
+  return true;
+}
+
+// Process searchable select values one at a time, waiting for each to complete
+function processSearchableValuesSequentially(
+  fieldId: string,
+  values: string[],
+  searchInput: HTMLInputElement,
+  wrapper: HTMLElement | null,
+  index: number
+): void {
+  if (index >= values.length) {
+    // All values processed - blur the input to close any open dropdown
+    searchInput.blur();
+    return;
+  }
+  
+  const isMultiSelect = wrapper?.classList.contains('multi-select') || 
+                        wrapper?.querySelector('.selected-items') !== null ||
+                        wrapper?.querySelector('[class*="multi"]') !== null;
+  const hasMoreValues = index < values.length - 1;
+  
+  const value = values[index];
+  console.log(`[SearchableSelect] Selecting value ${index + 1}/${values.length}: "${value}" for ${fieldId} (multi: ${isMultiSelect})`);
   
   // Step 1: Focus to open the dropdown
   searchInput.focus();
   wrapper?.classList.add('open');
   
-  // Step 2: Clear and set value
-  searchInput.value = '';
-  searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+  // Step 2: Clear and set value (only clear if this is not the first value in a sequence)
+  if (index > 0 || isMultiSelect) {
+    searchInput.value = '';
+    searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+  }
   
   // Small delay to let dropdown open
   setTimeout(() => {
     // Step 3: Type the value to filter
     searchInput.value = value;
     searchInput.dispatchEvent(new Event('input', { bubbles: true }));
-    searchInput.dispatchEvent(new Event('change', { bubbles: true }));
     
-    // Step 4: Find and click the dropdown
+    // Step 4: Find and click the dropdown item
     setTimeout(() => {
       const dropdown = wrapper?.querySelector('.dropdown') || 
                        document.getElementById(`${fieldId}Dropdown`) ||
                        document.querySelector(`[id*="${fieldId}"][class*="dropdown"]`);
       
+      let clicked = false;
+      
       if (dropdown) {
-        const items = dropdown.querySelectorAll('.dropdown-item:not(.hidden), [role="option"]:not(.hidden), li:not(.hidden)');
+        // Exclude already selected items - use fresh query each time
+        const items = dropdown.querySelectorAll('.dropdown-item:not(.hidden):not(.selected), [role="option"]:not(.hidden):not([aria-selected="true"]), li:not(.hidden):not(.selected)');
         let matchToClick: HTMLElement | null = null;
         let isExactMatch = false;
         
@@ -635,23 +677,60 @@ function tryFillSearchableSelect(fieldId: string, value: string): boolean {
           }
         });
         
-        if (matchToClick) {
-          console.log(`[SearchableSelect] Clicking option: "${matchToClick.textContent?.trim()}" for ${fieldId}`);
-          // Simulate real click
-          matchToClick.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-          matchToClick.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-          matchToClick.click();
+        if (matchToClick !== null) {
+          const elementToClick: HTMLElement = matchToClick;
+          console.log(`[SearchableSelect] Clicking option: "${elementToClick.textContent?.trim()}" for ${fieldId}`);
+          
+          // Ensure the element is visible and get its position
+          elementToClick.scrollIntoView({ block: 'nearest' });
+          
+          // Small delay after scroll to ensure element is positioned
+          setTimeout(() => {
+            // Use direct click - it's the most reliable method
+            elementToClick.click();
+            
+            console.log(`[SearchableSelect] Click dispatched for "${elementToClick.textContent?.trim()}" for ${fieldId}`);
+            
+            // Step 5: Process next value if needed
+            // For multi-select with more values, clear input and continue
+            // For single-select or last value, just blur to close dropdown
+            setTimeout(() => {
+              if (isMultiSelect && hasMoreValues) {
+                // Multi-select with more values: clear and continue
+                searchInput.value = '';
+                searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+                setTimeout(() => {
+                  processSearchableValuesSequentially(fieldId, values, searchInput, wrapper, index + 1);
+                }, 150);
+              } else if (hasMoreValues) {
+                // Single-select shouldn't have multiple values, but handle gracefully
+                processSearchableValuesSequentially(fieldId, values, searchInput, wrapper, index + 1);
+              } else {
+                // Last value - blur to close dropdown
+                searchInput.blur();
+                wrapper?.classList.remove('open');
+              }
+            }, 300); // Wait for click handler to process
+          }, 50); // Wait after scroll
+          
+          clicked = true;
         } else {
-          console.log(`[SearchableSelect] No match found for ${fieldId}, available options:`, 
+          console.log(`[SearchableSelect] No match found for "${value}" in ${fieldId}, available options:`, 
             Array.from(items).map(i => (i as HTMLElement).textContent?.trim()));
         }
       } else {
         console.log(`[SearchableSelect] No dropdown found for ${fieldId}`);
       }
-    }, 150);
-  }, 50);
-  
-  return true;
+      
+      // If we didn't click anything, move to next value
+      if (!clicked) {
+        setTimeout(() => {
+          processSearchableValuesSequentially(fieldId, values, searchInput, wrapper, index + 1);
+        }, 100);
+      }
+      
+    }, 150); // Wait for dropdown to filter
+  }, 100); // Wait for dropdown to open
 }
 
 // Try to fill a multi-select field

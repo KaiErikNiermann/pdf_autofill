@@ -56,7 +56,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true;
     })
     .with('PROCESS_PDF', () => {
-      processPdf(message.pdfBase64, message.formFields, message.tabId);
+      processPdf(message.pdfBase64, message.formFields, message.tabId, message.ocrMode || 'tesseract', message.mimeType);
       sendResponse({ started: true });
       return true;
     })
@@ -86,11 +86,34 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       clearStoredApiKey().then(() => sendResponse({ success: true }));
       return true;
     })
+    .with('GET_OCR_CAPABILITIES', () => {
+      getOcrCapabilities().then(sendResponse);
+      return true;
+    })
     .otherwise(() => false);
 });
 
-// Process PDF in background
-async function processPdf(pdfBase64: string, formFields: unknown[], tabId: number): Promise<void> {
+// Get OCR capabilities from server
+async function getOcrCapabilities(): Promise<{ tesseract_available: boolean; deepdoctection_available: boolean } | null> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/ocr-capabilities`);
+    if (response.ok) {
+      return await response.json();
+    }
+  } catch {
+    // Server not available
+  }
+  return null;
+}
+
+// Process PDF or image in background
+async function processPdf(
+  fileBase64: string,
+  formFields: unknown[],
+  tabId: number,
+  ocrMode: string = 'tesseract',
+  mimeType?: string
+): Promise<void> {
   processingState = { status: 'processing', tabId };
 
   try {
@@ -98,9 +121,16 @@ async function processPdf(pdfBase64: string, formFields: unknown[], tabId: numbe
     const apiKey = await getStoredApiKey();
     
     const requestBody: Record<string, unknown> = {
-      pdf_base64: pdfBase64,
+      file_base64: fileBase64,
+      pdf_base64: fileBase64, // Legacy support
       form_fields: formFields,
+      ocr_mode: ocrMode,
     };
+    
+    // Include mime type if provided
+    if (mimeType) {
+      requestBody.mime_type = mimeType;
+    }
     
     // Include API key if available
     if (apiKey) {
@@ -109,6 +139,9 @@ async function processPdf(pdfBase64: string, formFields: unknown[], tabId: numbe
     } else {
       console.log('No API key found, sending request without key');
     }
+    
+    const fileType = mimeType?.startsWith('image/') ? 'image' : 'PDF';
+    console.log(`Processing ${fileType} with OCR mode:`, ocrMode);
 
     const response = await fetch(`${API_BASE_URL}/api/process-pdf`, {
       method: 'POST',

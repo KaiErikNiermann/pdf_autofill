@@ -7,7 +7,7 @@ readme = "README.md"
 packages = [{include = "app", from = "src"}]
 
 [tool.poetry.dependencies]
-python = "^3.13"
+python = ">=3.13,<3.15"
 fastapi = "^0.109.0"
 uvicorn = {extras = ["standard"], version = "^0.27.0"}
 pydantic = "^2.5.3"
@@ -19,6 +19,16 @@ pdf2image = "^1.16.3"
 pillow = "^10.2.0"
 pymupdf = "^1.23.8"
 
+# Optional: deepdoctection for structure-preserving OCR
+# These are heavy dependencies, so they're optional
+deepdoctection = {version = "^1.0.0", optional = true}
+timm = {version = ">=0.9.0", optional = true}
+transformers = {version = ">=4.30.0", optional = true}
+python-doctr = {version = ">=0.7.0", optional = true}
+
+[tool.poetry.extras]
+deepdoctection = ["deepdoctection", "timm", "transformers", "python-doctr"]
+
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.4"
 pytest-asyncio = "^0.23.3"
@@ -27,6 +37,7 @@ ruff = "^0.1.13"
 mypy = "^1.8.0"
 black = "^24.1.0"
 pyinstaller = "^6.3.0"
+pyright = "^1.1.407"
 
 [build-system]
 requires = ["poetry-core"]

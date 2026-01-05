@@ -1,5 +1,6 @@
 """Main FastAPI application."""
 
+import logging
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 
@@ -9,15 +10,23 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import router
 from app.core.config import settings
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan events."""
     # Startup
-    print(f"Starting {settings.app_name}...")
+    logger.info("Starting %s...", settings.app_name)
     yield
     # Shutdown
-    print("Shutting down...")
+    logger.info("Shutting down...")
 
 
 def create_app() -> FastAPI:

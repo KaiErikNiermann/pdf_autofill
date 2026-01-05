@@ -184,7 +184,7 @@
 
   // src/content.ts
   (function() {
-    console.log(`[PDF Autofill Content] Build: 2026-01-04T14:20:56.297Z`);
+    console.log(`[PDF Autofill Content] Build: 2026-01-05T16:12:40.216Z`);
   })();
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     console.log("Content script received message:", message);
@@ -595,19 +595,35 @@
     if (!searchInput || !(searchInput instanceof HTMLInputElement)) {
       return false;
     }
-    console.log(`[SearchableSelect] Found search input for ${fieldId}, attempting to select "${value}"`);
+    const isMultiSelect = wrapper?.classList.contains("multi-select") || wrapper?.querySelector(".selected-items") !== null || wrapper?.querySelector('[class*="multi"]') !== null;
+    const values = value.includes(",") || isMultiSelect ? value.split(",").map((v2) => v2.trim()).filter((v2) => v2) : [value];
+    console.log(`[SearchableSelect] Found search input for ${fieldId}, attempting to select ${values.length} value(s): "${values.join('", "')}"`);
+    processSearchableValuesSequentially(fieldId, values, searchInput, wrapper, 0);
+    return true;
+  }
+  function processSearchableValuesSequentially(fieldId, values, searchInput, wrapper, index) {
+    if (index >= values.length) {
+      searchInput.blur();
+      return;
+    }
+    const isMultiSelect = wrapper?.classList.contains("multi-select") || wrapper?.querySelector(".selected-items") !== null || wrapper?.querySelector('[class*="multi"]') !== null;
+    const hasMoreValues = index < values.length - 1;
+    const value = values[index];
+    console.log(`[SearchableSelect] Selecting value ${index + 1}/${values.length}: "${value}" for ${fieldId} (multi: ${isMultiSelect})`);
     searchInput.focus();
     wrapper?.classList.add("open");
-    searchInput.value = "";
-    searchInput.dispatchEvent(new Event("input", { bubbles: true }));
+    if (index > 0 || isMultiSelect) {
+      searchInput.value = "";
+      searchInput.dispatchEvent(new Event("input", { bubbles: true }));
+    }
     setTimeout(() => {
       searchInput.value = value;
       searchInput.dispatchEvent(new Event("input", { bubbles: true }));
-      searchInput.dispatchEvent(new Event("change", { bubbles: true }));
       setTimeout(() => {
         const dropdown = wrapper?.querySelector(".dropdown") || document.getElementById(`${fieldId}Dropdown`) || document.querySelector(`[id*="${fieldId}"][class*="dropdown"]`);
+        let clicked = false;
         if (dropdown) {
-          const items = dropdown.querySelectorAll('.dropdown-item:not(.hidden), [role="option"]:not(.hidden), li:not(.hidden)');
+          const items = dropdown.querySelectorAll('.dropdown-item:not(.hidden):not(.selected), [role="option"]:not(.hidden):not([aria-selected="true"]), li:not(.hidden):not(.selected)');
           let matchToClick = null;
           let isExactMatch = false;
           console.log(`[SearchableSelect] Found ${items.length} dropdown items for ${fieldId}`);
@@ -622,23 +638,45 @@
               matchToClick = itemEl;
             }
           });
-          if (matchToClick) {
-            console.log(`[SearchableSelect] Clicking option: "${matchToClick.textContent?.trim()}" for ${fieldId}`);
-            matchToClick.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-            matchToClick.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-            matchToClick.click();
+          if (matchToClick !== null) {
+            const elementToClick = matchToClick;
+            console.log(`[SearchableSelect] Clicking option: "${elementToClick.textContent?.trim()}" for ${fieldId}`);
+            elementToClick.scrollIntoView({ block: "nearest" });
+            setTimeout(() => {
+              elementToClick.click();
+              console.log(`[SearchableSelect] Click dispatched for "${elementToClick.textContent?.trim()}" for ${fieldId}`);
+              setTimeout(() => {
+                if (isMultiSelect && hasMoreValues) {
+                  searchInput.value = "";
+                  searchInput.dispatchEvent(new Event("input", { bubbles: true }));
+                  setTimeout(() => {
+                    processSearchableValuesSequentially(fieldId, values, searchInput, wrapper, index + 1);
+                  }, 150);
+                } else if (hasMoreValues) {
+                  processSearchableValuesSequentially(fieldId, values, searchInput, wrapper, index + 1);
+                } else {
+                  searchInput.blur();
+                  wrapper?.classList.remove("open");
+                }
+              }, 300);
+            }, 50);
+            clicked = true;
           } else {
             console.log(
-              `[SearchableSelect] No match found for ${fieldId}, available options:`,
+              `[SearchableSelect] No match found for "${value}" in ${fieldId}, available options:`,
               Array.from(items).map((i2) => i2.textContent?.trim())
             );
           }
         } else {
           console.log(`[SearchableSelect] No dropdown found for ${fieldId}`);
         }
+        if (!clicked) {
+          setTimeout(() => {
+            processSearchableValuesSequentially(fieldId, values, searchInput, wrapper, index + 1);
+          }, 100);
+        }
       }, 150);
-    }, 50);
-    return true;
+    }, 100);
   }
   function tryFillMultiSelect(fieldId, value) {
     const wrapper = document.getElementById(`${fieldId}SelectWrapper`) || document.querySelector(`[data-field="${fieldId}"]`);
